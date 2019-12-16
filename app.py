@@ -1,62 +1,65 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sat Aug 18 01:00:17 2018
+Created on Fri Jan 18 13:41:10 2019
 
-@author: linzino
+@author: aaaaa
 """
 
-
-from flask import Flask, request, abort
-from linebot import (LineBotApi, WebhookHandler)
+from __future__ import print_function
+import time
+from linebot import (LineBotApi, WebhookHandler, exceptions)
 from linebot.exceptions import (InvalidSignatureError)
 from linebot.models import *
-import mongodb
-import re
+import schedule
+from pymongo import MongoClient
+import urllib.parse
+import datetime
+import requests
+from bs4 import BeautifulSoup
 
-app = Flask(__name__)
+# Authentication Database認證資料庫
+Authdb='mystock'
 
-# 必須放上自己的Channel Access Token
 line_bot_api = LineBotApi('VbgVFJ5GcUXalkkCjKXiMVWTrmGW+r3DN9VeZozSLX+Zq4hRXcrS/wI6XPnkLMX5swDxQcjlYuXHdXRBGpdilOJ86xlcmnk8Cuo66GBAS/Wx0DfrzYZFAxbdbo5qmqIS6/Sbz5oa72D8DJ278aRkCQdB04t89/1O/w1cDnyilFU=')
-# 必須放上自己的Channel Secret
-handler = WebhookHandler('ff40e56527658634a2bbbb65cd25eee4')
+yourid='Ube8f42668a7d9ce94b0728af9b9205eb'
+##### 資料庫連接 #####
+def constructor():
+    client = MongoClient('client = pymongo.MongoClient("mongodb://chuc:chuc0315@@cluster0-shard-00-00-6dvcu.mongodb.net:27017,cluster0-shard-00-01-6dvcu.mongodb.net:27017,cluster0-shard-00-02-6dvcu.mongodb.net:27017/test?ssl=true&replicaSet=Cluster0-shard-0&authSource=admin&retryWrites=true&w=majority")')
+    db = client[Authdb]
+    return db
 
-line_bot_api.push_message('Ube8f42668a7d9ce94b0728af9b9205eb', TextSendMessage(text='你可以開始了'))
+# 抓你的股票
+def show_user_stock_fountion():  
+    db=constructor()
+    collect = db['fountion']
+    cel=list(collect.find({"data": 'care_stock'}))
+    return cel
 
-# 監聽所有來自 /callback 的 Post Request
-@app.route("/callback", methods=['POST'])
-def callback():
-    # get X-Line-Signature header value
-    signature = request.headers['X-Line-Signature']
+def job():
+    data = show_user_stock_fountion()
+    for i in data:
+        stock=i['stock']
+        bs=i['bs']
+        price=i['price']
+        
+        url = 'https://tw.stock.yahoo.com/q/q?s=' + stock 
+        list_req = requests.get(url)
+        soup = BeautifulSoup(list_req.content, "html.parser")
+        getstock= soup.find('b').text #裡面所有文字內容
+        if float(getstock):
+            if bs == '<':
+                if float(getstock) < price:
+                    get=stock + '的價格：' + getstock
+                    line_bot_api.push_message(yourid, TextSendMessage(text=get))
+            else:
+                if float(getstock) > price:
+                    get=stock + '的價格：' + getstock
+                    line_bot_api.push_message(yourid, TextSendMessage(text=get))
+        else:
+            line_bot_api.push_message(yourid, TextSendMessage(text='這個有問題'))
+second_5_j = schedule.every(10).seconds.do(job)
 
-    # get request body as text
-    body = request.get_data(as_text=True)
-    app.logger.info("Request body: " + body)
-
-    # handle webhook body
-    try:
-        handler.handle(body, signature)
-    except InvalidSignatureError:
-        abort(400)
-    return 'OK'
-
-#訊息傳遞區塊
-@handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
-    ### 抓到顧客的資料 ###
-    profile = line_bot_api.get_profile(event.source.user_id)
-    uid = profile.user_id #使用者ID
-    usespeak=str(event.message.text) #使用者講的話
-    if re.match('[0-9]{4}[<>][0-9]',usespeak): # 先判斷是否是使用者要用來存股票的
-        mongodb.write_user_stock_fountion(stock=usespeak[0:4], bs=usespeak[4:5], price=usespeak[5:])
-        line_bot_api.push_message(uid, TextSendMessage(usespeak[0:4]+'已經儲存成功'))
-        return 0
-
-    
-    elif re.match('刪除[0-9]{4}',usespeak): # 刪除存在資料庫裡面的股票
-        mongodb.delete_user_stock_fountion(stock=usespeak[2:])
-        line_bot_api.push_message(uid, TextSendMessage(usespeak+'已經刪除成功'))
-        return 0
-
-
-if __name__ == '__main__':
-    app.run(debug=True)
+# 無窮迴圈
+while True: 
+    schedule.run_pending()
+    time.sleep(1)
